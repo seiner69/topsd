@@ -1,0 +1,27 @@
+# 输入图片 (用户自行提供)
+*.webp
+*.jpg
+*.jpeg
+*.png
+
+# 生成产物
+PSD输出/
+pipeline_output/temp/
+pipeline_output/psd/
+pipeline_output/json/
+pipeline_output/_all_results.json
+
+# Node.js
+pipeline_output/node_modules/
+
+# Python
+__pycache__/
+*.pyc
+
+# 模型文件 (太大, 需手动下载)
+*.pth
+*.pt
+
+# IDE
+.vscode/
+.idea/
