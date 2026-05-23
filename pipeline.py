@@ -34,8 +34,9 @@ from simple_lama_inpainting import SimpleLama
 # ============================================================
 # 配置
 # ============================================================
-INPUT_DIR = Path(r"C:\Users\86191\Desktop\详情页")
-OUTPUT_DIR = INPUT_DIR / "pipeline_output"
+PROJECT_DIR = Path(__file__).parent.resolve()
+INPUT_DIR = PROJECT_DIR
+OUTPUT_DIR = PROJECT_DIR / "output"
 TEMP_DIR = OUTPUT_DIR / "temp"
 JSON_DIR = OUTPUT_DIR / "json"
 PSD_DIR = OUTPUT_DIR / "psd"
@@ -574,7 +575,7 @@ def process_stage1(img_path: Path, ocr_reader, mask_generator) -> dict | None:
         print(f"    [{label}] {crop_filename} — {bbox_w}x{bbox_h} @ ({bbox_x},{bbox_y})")
         image_layers.append({
             "type": "image", "name": f"{label}_{i+1}", "label": label,
-            "imagePath": f"./temp/{crop_filename}",
+            "imagePath": f"./output/temp/{crop_filename}",
             "left": int(bbox_x), "top": int(bbox_y),
             "width": int(bbox_w), "height": int(bbox_h),
             "stability": round(m["stability_score"], 3),
@@ -622,7 +623,7 @@ def process_stage2(data: dict, lama, sd_pipe=None) -> dict | None:
     # JSON
     layers_json = [{
         "type": "background", "name": "背景",
-        "imagePath": f"./temp/{name}_clean_bg.png",
+        "imagePath": f"./output/temp/{name}_clean_bg.png",
     }]
     layers_json.extend(sorted(image_layers, key=lambda l: -l["width"] * l["height"]))
     for tl in text_layers:

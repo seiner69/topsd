@@ -5,14 +5,11 @@
 *.png
 
 # 生成产物
+output/
 PSD输出/
-pipeline_output/temp/
-pipeline_output/psd/
-pipeline_output/json/
-pipeline_output/_all_results.json
 
 # Node.js
-pipeline_output/node_modules/
+node_modules/
 
 # Python
 __pycache__/

@@ -17,9 +17,10 @@ const { writePsdBuffer } = require('ag-psd');
 // ============================================================
 // 配置
 // ============================================================
-const JSON_DIR = path.join(__dirname, 'json');
-const TEMP_DIR = path.join(__dirname, 'temp');
-const PSD_DIR = path.join(__dirname, 'psd');
+const OUTPUT_DIR = path.join(__dirname, 'output');
+const JSON_DIR = path.join(OUTPUT_DIR, 'json');
+const TEMP_DIR = path.join(OUTPUT_DIR, 'temp');
+const PSD_DIR = path.join(OUTPUT_DIR, 'psd');
 
 // 低置信度文字转为像素图层的阈值
 const TEXT_CONFIDENCE_THRESHOLD = 0.50;

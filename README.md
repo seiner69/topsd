@@ -45,15 +45,16 @@
 ```
 topsd/
 ├── pipeline.py              # Stage 1-2 主脚本 (Python)
-├── pipeline_output/
-│   ├── compile_psd.js       # PSD 编译器 (Node.js)
+├── compile_psd.js           # PSD 编译器 (Node.js)
+├── package.json             # Node 依赖
+├── README.md
+├── CHANGELOG.md
+├── decompose_to_psd.py      # v1 旧版 (SAM only, 仅供参考)
+├── output/                  # 生成产物
 │   ├── temp/                # 中间产物 (背景 + 图层 PNG)
 │   ├── json/                # JSON 图层描述
-│   ├── psd/                 # 最终 PSD
-│   ├── package.json         # Node 依赖
-│   └── node_modules/        # ag-psd, pngjs
-├── decompose_to_psd.py      # v1 旧版 (SAM only, 仅供参考)
-└── *.webp                   # 原始图片 (用户提供)
+│   └── psd/                 # 最终 PSD
+└── *.webp                   # 原始图片 (用户放入)
 ```
 
 ## 依赖环境
@@ -97,7 +98,6 @@ pip install segment-anything simple-lama-inpainting opencv-python Pillow numpy
 pip install diffusers  # 可选: SD Inpainting
 
 # Node.js
-cd pipeline_output
 npm install
 ```
 
@@ -105,20 +105,17 @@ npm install
 
 ```bash
 # 默认 LaMa 模式 (推荐, 省显存)
-cd topsd
 python pipeline.py
 
 # 切换到 SD 模式 (编辑 pipeline.py 顶部的 INPAINT_MODE = "sd")
 
 # 编译 PSD
-cd pipeline_output
 node compile_psd.js
 ```
 
 ### 3. 仅编译 PSD (JSON 已生成时)
 
 ```bash
-cd pipeline_output
 node compile_psd.js
 ```
 
@@ -135,13 +132,13 @@ node compile_psd.js
     {
       "type": "background",
       "name": "背景",
-      "imagePath": "./temp/detail_clean_bg.png"
+      "imagePath": "./output/temp/detail_clean_bg.png"
     },
     {
       "type": "image",
       "name": "product_2",
       "label": "product",
-      "imagePath": "./temp/detail_product_2.png",
+      "imagePath": "./output/temp/detail_product_2.png",
       "left": 0, "top": 7,
       "width": 2480, "height": 2118,
       "stability": 0.939
