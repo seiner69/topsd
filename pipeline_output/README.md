@@ -1,176 +1,202 @@
-# 电商详情页 → PSD 图层拆解管线
+# JPG→PSD 智能分层管线
 
-将电商详情页扁平图片（WEBP/JPG/PNG）自动拆解为分层的 PSD 文件，支持可编辑文字图层。
+将电商详情页扁平图片（WEBP/JPG/PNG）自动拆解为分层 PSD，支持可编辑文字图层。
 
 ## 管线架构
 
 ```
-原始图片 (WEBP)
+原始图片 (WEBP/JPG/PNG)
     │
     ▼
 ┌──────────────────────────────────────────────┐
-│ Step 1: 版面分析与目标检测                      │
-│  · EasyOCR 文字检测 → 文本内容/坐标/颜色/字号     │
-│  · SAM 目标分割 → 产品图/模特图/装饰元素边界框    │
-│  产出: 图层元数据                               │
+│ Stage 1: 版面分析与目标检测                     │
+│  · PaddleOCR PP-OCRv4 → 文本/坐标/颜色/字体属性  │
+│  · SAM 目标分割 → 产品图/装饰元素 mask           │
+│  产出: 图层元数据 + 裁剪 PNG + Inpaint mask      │
 ├──────────────────────────────────────────────┤
-│ Step 2: 图层剥离与背景修复                      │
-│  · 前景抠图 → 透明 PNG                          │
-│  · LaMa Inpainting → 擦除文字和商品的干净背景     │
-│  产出: 独立图层 PNG + 无痕背景图                  │
+│ Stage 2: 背景修复 + JSON 编译                   │
+│  · LaMa / SD Inpainting → 干净背景              │
+│  · 中间 JSON 描述 (含置信度/字体元数据)           │
+│  产出: JSON + 干净背景 PNG                      │
 ├──────────────────────────────────────────────┤
-│ Step 3: 中间 JSON 状态描述                      │
-│  · 统一整理所有元素的坐标、类型、样式             │
-│  产出: JSON 描述文件                            │
-├──────────────────────────────────────────────┤
-│ Step 4: PSD 二进制编译                         │
-│  · ag-psd 写入 PSD 文件                        │
-│  · 像素图层: 嵌入 PNG 像素数据                   │
-│  · 文字图层: 真实可编辑文字（非栅格化）            │
+│ Step 4: PSD 二进制编译 (compile_psd.js)         │
+│  · ag-psd 写入 → 可编辑文字图层                  │
+│  · 低置信文字自动丢弃                            │
 │  产出: .psd 文件                                │
 └──────────────────────────────────────────────┘
 ```
 
+## 精度特性 (v2.1)
+
+| 特性 | 技术 | 说明 |
+|------|------|------|
+| 中文 OCR | PaddleOCR PP-OCRv4 (CPU) | 置信度 0.99+，比 EasyOCR 提升 15-20% |
+| 英文 OCR | PP-OCRv4 + 词表拆分 | 自动修复 "PRODUCTINFORMATION" → "PRODUCT INFORMATION" |
+| 文字颜色 | Otsu 二值化 + 前景 K-means | 精确提取文字色，不受背景色干扰 |
+| 字体粗细 | Distance Transform | 检测 thin / normal / bold / extra-bold |
+| 字体风格 | 水平投影方差 | 检测 sans-serif / serif |
+| 字体映射 | 粗细+风格→PS字体名 | Microsoft YaHei / FangSong / SimSun |
+| 背景修复 (默认) | LaMa Inpainting | 快速，低 VRAM (~2GB) |
+| 背景修复 (可选) | SD 1.5 Inpainting | 高质量纹理修复，需 ~4GB VRAM |
+| PSD 文字图层 | ag-psd LayerTextData | 双击可编辑，自动 fauxBold |
+
 ## 目录结构
 
 ```
-详情页/
-├── pipeline.py              # Step 1-3 主脚本 (Python)
+topsd/
+├── pipeline.py              # Stage 1-2 主脚本 (Python)
 ├── pipeline_output/
-│   ├── compile_psd.js       # Step 4 PSD 编译器 (Node.js)
-│   ├── temp/                # 中间产物 (干净背景 + 图层 PNG)
-│   ├── json/                # JSON 图层描述文件
-│   ├── psd/                 # 最终 PSD 文件
-│   ├── package.json         # Node.js 依赖
+│   ├── compile_psd.js       # PSD 编译器 (Node.js)
+│   ├── temp/                # 中间产物 (背景 + 图层 PNG)
+│   ├── json/                # JSON 图层描述
+│   ├── psd/                 # 最终 PSD
+│   ├── package.json         # Node 依赖
 │   └── node_modules/        # ag-psd, pngjs
-└── *.webp                   # 原始图片
+├── decompose_to_psd.py      # v1 旧版 (SAM only, 仅供参考)
+└── *.webp                   # 原始图片 (用户提供)
 ```
 
 ## 依赖环境
 
 ### Python
-| 包 | 用途 |
-|----|------|
-| torch | 深度学习后端 |
-| easyocr | 中文文字检测与识别 |
-| segment-anything | SAM 目标分割 |
-| simple-lama-inpainting | LaMa 背景修复 |
-| opencv-python | 图像处理 |
-| Pillow | 图像读写 |
-| numpy | 数组运算 |
+| 包 | 版本 | 用途 |
+|----|------|------|
+| torch | 2.5.1+cu121 | 深度学习后端 |
+| paddlepaddle | 3.3.1 (CPU) | PaddleOCR 引擎 |
+| paddleocr | 2.8.1 | 中文文字检测识别 |
+| segment-anything | - | SAM 目标分割 |
+| simple-lama-inpainting | 0.1.2 | LaMa 背景修复 |
+| diffusers | 0.38.0 | SD Inpainting (可选) |
+| opencv-python | - | 图像处理 |
+| Pillow | - | 图像读写 |
+| numpy | - | 数组运算 |
 
 ### Node.js
 | 包 | 用途 |
 |----|------|
-| ag-psd | PSD 二进制读写（支持文字图层）|
+| ag-psd | PSD 二进制读写 (支持文字图层) |
 | pngjs | PNG 像素数据解析 |
 
 ### 模型文件
-| 模型 | 大小 | 路径 |
-|------|------|------|
-| sam_vit_b_01ec64.pth | 358MB | ComfyUI/models/sams/ |
-| big-lama.pt | 196MB | ~/.cache/torch/hub/checkpoints/ |
+| 模型 | 大小 | 路径 | 说明 |
+|------|------|------|------|
+| sam_vit_b_01ec64.pth | 358MB | ComfyUI/models/sams/ | 需手动下载 |
+| PP-OCRv4 det/rec/cls | ~18MB | ~/.paddleocr/whl/ | 自动下载 |
+| big-lama.pt | 196MB | ~/.cache/torch/hub/ | 自动下载 |
+| SD 1.5 Inpainting | ~5GB | ~/.cache/huggingface/ | 首次运行自动下载 |
 
 ## 使用方式
 
-### 1. 运行完整管线
+### 1. 安装依赖
 
 ```bash
-# Step 1-3: Python (OCR + SAM + LaMa + JSON)
-cd C:\Users\86191\Desktop\详情页
+# Python
+pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu121
+pip install paddlepaddle paddleocr==2.8.1
+pip install segment-anything simple-lama-inpainting opencv-python Pillow numpy
+pip install diffusers  # 可选: SD Inpainting
+
+# Node.js
+cd pipeline_output
+npm install
+```
+
+### 2. 运行管线
+
+```bash
+# 默认 LaMa 模式 (推荐, 省显存)
+cd topsd
 python pipeline.py
 
-# Step 4: PSD 编译
+# 切换到 SD 模式 (编辑 pipeline.py 顶部的 INPAINT_MODE = "sd")
+
+# 编译 PSD
 cd pipeline_output
 node compile_psd.js
 ```
 
-### 2. 仅运行 PSD 编译 (JSON 已生成时)
+### 3. 仅编译 PSD (JSON 已生成时)
 
 ```bash
-cd C:\Users\86191\Desktop\详情页\pipeline_output
+cd pipeline_output
 node compile_psd.js
 ```
 
-### 3. 处理其他图片
-
-将新的 WEBP/PNG/JPG 图片放入 `详情页/` 目录，修改 `pipeline.py` 中的 `INPUT_DIR` 路径后运行。
-
-## JSON 描述格式
+## JSON 描述格式 (v2.1)
 
 ```json
 {
-  "sourceImage": "image.webp",
+  "sourceImage": "detail.webp",
   "width": 2480,
   "height": 2132,
+  "ocrEngine": "PaddleOCR PP-OCRv4",
+  "inpaintMode": "lama",
   "layers": [
     {
       "type": "background",
       "name": "背景",
-      "imagePath": "./temp/xxx_clean_bg.png"
+      "imagePath": "./temp/detail_clean_bg.png"
     },
     {
       "type": "image",
       "name": "product_2",
       "label": "product",
-      "imagePath": "./temp/xxx_product_2.png",
+      "imagePath": "./temp/detail_product_2.png",
       "left": 0, "top": 7,
-      "width": 2480, "height": 2118
+      "width": 2480, "height": 2118,
+      "stability": 0.939
     },
     {
       "type": "text",
       "name": "文字_产品信息",
       "text": "产品信息",
-      "left": 882, "top": 603,
-      "width": 722, "height": 208,
-      "fontSize": 208,
-      "color": "#f3f8fd"
+      "left": 913, "top": 632,
+      "width": 666, "height": 155,
+      "fontSize": 155,
+      "color": "#23394e",
+      "confidence": 0.997,
+      "fontWeight": "thin",
+      "fontStyle": "sans-serif",
+      "fontName": "Microsoft YaHei"
     }
   ]
 }
 ```
-
-## 图层类型说明
-
-| type | 说明 | PSD 中表现 |
-|------|------|-----------|
-| background | LaMa 修复的无痕背景 | 像素图层（最底层）|
-| image | SAM 检测到的产品图/装饰元素 | 带透明通道的像素图层 |
-| text | EasyOCR 识别的文字块 | **可编辑文字图层** |
 
 ## 可调参数
 
 ### pipeline.py
 
 ```python
-SAM_MAX_SIDE = 1024       # SAM 处理分辨率 (越大越精细，越吃显存)
+INPAINT_MODE = "lama"       # "lama" (快) 或 "sd" (高质量)
+OCR_CONF_THRESHOLD = 0.50   # OCR 最低置信度
+SAM_MAX_SIDE = 1024         # SAM 处理分辨率 (越大越精细)
 SAM_PARAMS = {
-    "points_per_side": 32,      # 采样密度 (16→快, 64→精细)
-    "pred_iou_thresh": 0.88,    # 质量阈值
+    "points_per_side": 32,        # 采样密度 (16→快, 64→精细)
+    "pred_iou_thresh": 0.88,
     "stability_score_thresh": 0.92,
 }
-MAX_LAYERS = 30            # 单图最大图层数
 ```
 
 ### compile_psd.js
 
 ```javascript
-const CN_FONT = {
-  default: 'SimHei',       // 默认中文字体
-};
+TEXT_CONFIDENCE_THRESHOLD = 0.50  // 低置信文字丢弃阈值
 ```
 
 ## 已知限制
 
 1. **文字图层**: ag-psd 在 Photoshop 打开时有"需要更新图层"提示，点击确认后正常可编辑
-2. **文字朝向**: 仅支持横排文字，竖排文字可能损坏
-3. **字体**: 使用默认黑体 (SimHei)，如需匹配原文字体需手动调整
-4. **Inpainting**: LaMa 对渐变/纹理复杂背景可能留下痕迹
-5. **OCR**: EasyOCR 对极小文字、艺术字体识别率有限
+2. **字体**: 粗细/风格检测为启发式算法，极端字体可能误判
+3. **英文**: PP-OCRv4 对英文空格识别不稳定，依赖词表后处理
+4. **SD Inpainting**: 需 4GB+ VRAM，大图自动缩放到 768px 处理
+5. **PaddleOCR**: CPU 模式约 0.9s/张，大批量可接受
 
 ## 性能参考
 
 - GPU: RTX 3060 (6GB)
-- 平均处理时间: 每张图约 2-4 分钟
-- 峰值显存: ~5GB
-- 12 张图片总耗时: ~30 分钟
+- LaMa 模式: ~2-3 分钟/张 (OCR 0.9s + SAM ~30s + LaMa ~60s)
+- SD 模式: ~3-5 分钟/张 (OCR 0.9s + SAM ~30s + SD ~120s)
+- 峰值显存 (LaMa): ~3GB
+- 峰值显存 (SD): ~5GB
+- 12 张图片 LaMa 总耗时: ~25 分钟
