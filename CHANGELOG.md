@@ -1,4 +1,49 @@
-# 项目开发日志
+# 开发日志
+
+## 2026-05-24 — v2.2.1 模块化重构 + 目录整理
+
+### 代码重构
+
+791 行单体 `pipeline.py` 拆分为 6 个模块：
+
+| 模块 | 职责 |
+|------|------|
+| `config.py` | 全局配置常量 |
+| `image_utils.py` | 图像 I/O 与 mask 运算 |
+| `text_engine.py` | PaddleOCR 封装 + 颜色/字体检测 |
+| `sam_engine.py` | SAM 分割 + mask 分类去重 |
+| `inpaint_engine.py` | LaMa/SD 背景修复 |
+| `pipeline.py` | 纯编排层 (214行) |
+
+### 目录整理
+
+- 输入图片统一移至 `input/` 目录
+- 删除 `decompose_to_psd.py` (v1 旧版)
+- 删除 `PSD输出/` (旧产物目录)
+- 更新 `.gitignore` 适配新结构
+
+---
+
+## 2026-05-24 — v2.2 GPU 加速版
+
+### 核心变更
+
+| 维度 | v2.1 | v2.2 |
+|------|------|------|
+| PaddleOCR | 2.8.1 | **3.4.1** |
+| PaddlePaddle | 2.6.2 CPU | **3.2.2 GPU (CUDA 11.8)** |
+| OCR 引擎 | PP-OCRv4 | **PP-OCRv5_server** |
+| OCR 设备 | CPU (~0.86s/张) | **GPU (~0.38s/张)** |
+| 平均置信度 | 0.992 | 0.958 (校准更严格) |
+
+### 技术要点
+
+- PaddlePaddle GPU (CUDA 11.8) 与 torch (CUDA 12.1) 可共存，需 `import torch` 先于 `import paddleocr`
+- PaddlePaddle 3.x GPU 仅通过 PaddlePaddle 官方镜像分发，PyPI 上只有 CPU 版
+- PP-OCRv5_server 模型首次运行自动下载到 `~/.paddlex/official_models/`
+- PaddleOCR 3.x API 变更: `ocr.predict(img)` 返回 `OCRResult` 对象
+
+---
 
 ## 2026-05-24 — v2.1 精度提升版
 
@@ -17,13 +62,6 @@
 | 低置信过滤 | 无 | <50% 自动丢弃 |
 | VRAM 管理 | 单次加载 | SAM→SD 两阶段分离显存 |
 
-### 目录结构重组
-
-```
-v1.0:  pipeline_output/ 混杂源码和产物
-v2.1:  源码在根目录, 产物在 output/
-```
-
 ### 依赖变更
 
 ```bash
@@ -33,16 +71,11 @@ pip install diffusers  # SD Inpainting 可选
 
 # 移除
 # EasyOCR 不再使用
-# paddlepaddle-gpu → paddlepaddle (CPU, 避免与 torch CUDA 冲突)
 ```
 
 ---
 
 ## 2026-05-23 — v1.0 初始版本
-
-### 背景
-
-电商详情页图片 (12 张 WEBP) → 分层 PSD，以便在 Photoshop 中编辑。
 
 ### 技术演进
 

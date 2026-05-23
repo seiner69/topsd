@@ -1,12 +1,8 @@
-# 输入图片 (用户自行提供)
-*.webp
-*.jpg
-*.jpeg
-*.png
+# 输入图片
+input/
 
 # 生成产物
 output/
-PSD输出/
 
 # Node.js
 node_modules/
@@ -15,7 +11,7 @@ node_modules/
 __pycache__/
 *.pyc
 
-# 模型文件 (太大, 需手动下载)
+# 模型文件
 *.pth
 *.pt
 

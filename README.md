@@ -1,199 +1,186 @@
 # JPG→PSD 智能分层管线
 
-将电商详情页扁平图片（WEBP/JPG/PNG）自动拆解为分层 PSD，支持可编辑文字图层。
+电商详情页扁平图片 → 可编辑文字图层的分层 PSD。
 
-## 管线架构
+## 管线概览
 
 ```
-原始图片 (WEBP/JPG/PNG)
+input/*.webp (原始图片)
     │
     ▼
-┌──────────────────────────────────────────────┐
-│ Stage 1: 版面分析与目标检测                     │
-│  · PaddleOCR PP-OCRv4 → 文本/坐标/颜色/字体属性  │
-│  · SAM 目标分割 → 产品图/装饰元素 mask           │
-│  产出: 图层元数据 + 裁剪 PNG + Inpaint mask      │
-├──────────────────────────────────────────────┤
-│ Stage 2: 背景修复 + JSON 编译                   │
-│  · LaMa / SD Inpainting → 干净背景              │
-│  · 中间 JSON 描述 (含置信度/字体元数据)           │
-│  产出: JSON + 干净背景 PNG                      │
-├──────────────────────────────────────────────┤
-│ Step 4: PSD 二进制编译 (compile_psd.js)         │
-│  · ag-psd 写入 → 可编辑文字图层                  │
-│  · 低置信文字自动丢弃                            │
-│  产出: .psd 文件                                │
-└──────────────────────────────────────────────┘
+Stage 1: 版面分析 (OCR + SAM)
+    · PaddleOCR PP-OCRv5 → 文本/坐标/颜色/字体属性
+    · SAM 目标分割 → 产品图/装饰元素 mask
+    产出: 图层元数据 + 裁剪 PNG + Inpaint mask
+    │
+    ▼
+Stage 2: 背景修复 + JSON 编译
+    · LaMa / SD Inpainting → 干净背景
+    · 中间 JSON (含置信度/字体元数据)
+    产出: JSON + 干净背景 PNG
+    │
+    ▼
+compile_psd.js: PSD 二进制编译
+    · ag-psd 写入可编辑文字图层
+    · 低置信文字自动丢弃
+    产出: output/psd/*.psd
 ```
 
-## 精度特性 (v2.1)
+## 环境
 
-| 特性 | 技术 | 说明 |
+| 组件 | 版本 | 说明 |
 |------|------|------|
-| 中文 OCR | PaddleOCR PP-OCRv4 (CPU) | 置信度 0.99+，比 EasyOCR 提升 15-20% |
-| 英文 OCR | PP-OCRv4 + 词表拆分 | 自动修复 "PRODUCTINFORMATION" → "PRODUCT INFORMATION" |
-| 文字颜色 | Otsu 二值化 + 前景 K-means | 精确提取文字色，不受背景色干扰 |
-| 字体粗细 | Distance Transform | 检测 thin / normal / bold / extra-bold |
-| 字体风格 | 水平投影方差 | 检测 sans-serif / serif |
-| 字体映射 | 粗细+风格→PS字体名 | Microsoft YaHei / FangSong / SimSun |
-| 背景修复 (默认) | LaMa Inpainting | 快速，低 VRAM (~2GB) |
-| 背景修复 (可选) | SD 1.5 Inpainting | 高质量纹理修复，需 ~4GB VRAM |
-| PSD 文字图层 | ag-psd LayerTextData | 双击可编辑，自动 fauxBold |
+| Python | 3.11 | |
+| Node.js | — | 仅 PSD 编译阶段 |
+| torch | 2.5.1+cu121 | CUDA 12.1 |
+| paddlepaddle-gpu | 3.2.2 | CUDA 11.8 (与 torch CUDA 12.1 共存) |
+| paddleocr | 3.4.1 | PP-OCRv5_server |
+| segment-anything | — | vit_b |
+| simple-lama-inpainting | 0.1.2 | 默认背景修复 |
+| diffusers | 0.38+ | SD Inpainting (可选) |
+| ag-psd | — | PSD 二进制写入 |
+
+### 模型文件
+
+| 模型 | 大小 | 路径 |
+|------|------|------|
+| sam_vit_b_01ec64.pth | 358MB | E:/pypy/github/ComfyUI/models/sams/ |
+| PP-OCRv5_server_det/rec | ~20MB | ~/.paddlex/official_models/ (自动下载) |
+| big-lama.pt | 196MB | ~/.cache/torch/hub/ (自动下载) |
+| SD 1.5 Inpainting | ~5GB | ~/.cache/huggingface/ (首次运行自动下载) |
+
+## 快速开始
+
+```bash
+# 1. 安装 Python 依赖
+pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu121
+pip install paddlepaddle-gpu==3.2.2 --index-url https://www.paddlepaddle.org.cn/packages/stable/cu118/
+pip install paddleocr==3.4.1
+pip install segment-anything simple-lama-inpainting opencv-python Pillow numpy diffusers
+
+# 2. 安装 Node 依赖
+npm install
+
+# 3. 放入原始图片到 input/ 目录 (*.webp / *.jpg / *.png)
+
+# 4. 运行管线 → 生成 PSD
+python pipeline.py && node compile_psd.js
+```
 
 ## 目录结构
 
 ```
 topsd/
-├── pipeline.py              # Stage 1-2 主脚本 (Python)
-├── compile_psd.js           # PSD 编译器 (Node.js)
-├── package.json             # Node 依赖
+├── config.py              # 全局配置 (路径/设备/阈值/词表)
+├── pipeline.py            # Stage 1-2 编排层
+├── text_engine.py         # PaddleOCR 3.4.1 + 颜色/字体检测
+├── sam_engine.py          # SAM vit_b 分割 + mask 分类去重
+├── inpaint_engine.py      # LaMa / SD 背景修复
+├── image_utils.py         # 图像 I/O 与 mask 运算工具
+├── compile_psd.js         # PSD 编译器 (Node.js)
+├── package.json
 ├── README.md
 ├── CHANGELOG.md
-├── decompose_to_psd.py      # v1 旧版 (SAM only, 仅供参考)
-├── output/                  # 生成产物
-│   ├── temp/                # 中间产物 (背景 + 图层 PNG)
-│   ├── json/                # JSON 图层描述
-│   └── psd/                 # 最终 PSD
-└── *.webp                   # 原始图片 (用户放入)
+├── input/                 # 输入图片 (用户放入)
+│   └── *.webp
+└── output/                # 生成产物
+    ├── temp/              #   中间 PNG (背景 + 图层裁剪)
+    ├── json/              #   JSON 图层描述
+    └── psd/               #   最终 PSD
 ```
 
-## 依赖环境
+## 模块说明
 
-### Python
-| 包 | 版本 | 用途 |
-|----|------|------|
-| torch | 2.5.1+cu121 | 深度学习后端 |
-| paddlepaddle | 3.3.1 (CPU) | PaddleOCR 引擎 |
-| paddleocr | 2.8.1 | 中文文字检测识别 |
-| segment-anything | - | SAM 目标分割 |
-| simple-lama-inpainting | 0.1.2 | LaMa 背景修复 |
-| diffusers | 0.38.0 | SD Inpainting (可选) |
-| opencv-python | - | 图像处理 |
-| Pillow | - | 图像读写 |
-| numpy | - | 数组运算 |
+| 模块 | 职责 | 行数 |
+|------|------|------|
+| `config.py` | 路径、设备、SAM 参数、OCR 阈值、英文词表 | ~55 |
+| `image_utils.py` | imread_unicode、缩放、IoU、mask 几何特征、图层裁剪 | ~85 |
+| `text_engine.py` | PaddleOCR 封装、Otsu 颜色提取、Distance Transform 粗细检测、字体映射 | ~245 |
+| `sam_engine.py` | SAM 分割封装、mask 分类去重、图层导出 | ~125 |
+| `inpaint_engine.py` | LaMa/SD 背景修复、inpaint mask 构建 | ~100 |
+| `pipeline.py` | 纯编排：两阶段流水线 + 引擎生命周期管理 | ~215 |
 
-### Node.js
-| 包 | 用途 |
-|----|------|
-| ag-psd | PSD 二进制读写 (支持文字图层) |
-| pngjs | PNG 像素数据解析 |
+## 可调参数
 
-### 模型文件
-| 模型 | 大小 | 路径 | 说明 |
-|------|------|------|------|
-| sam_vit_b_01ec64.pth | 358MB | ComfyUI/models/sams/ | 需手动下载 |
-| PP-OCRv4 det/rec/cls | ~18MB | ~/.paddleocr/whl/ | 自动下载 |
-| big-lama.pt | 196MB | ~/.cache/torch/hub/ | 自动下载 |
-| SD 1.5 Inpainting | ~5GB | ~/.cache/huggingface/ | 首次运行自动下载 |
+所有参数集中在 `config.py` 顶部：
 
-## 使用方式
+```python
+# 设备
+DEVICE = "cuda"           # SAM 设备
+OCR_DEVICE = "gpu:0"      # PaddleOCR 设备
 
-### 1. 安装依赖
+# 修复模式
+INPAINT_MODE = "lama"     # "lama" | "sd"
 
-```bash
-# Python
-pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu121
-pip install paddlepaddle paddleocr==2.8.1
-pip install segment-anything simple-lama-inpainting opencv-python Pillow numpy
-pip install diffusers  # 可选: SD Inpainting
+# SAM
+SAM_MAX_SIDE = 1024
+SAM_PARAMS = {
+    "points_per_side": 32,
+    "pred_iou_thresh": 0.88,
+    "stability_score_thresh": 0.92,
+    "crop_n_layers": 0,
+    "min_mask_region_area": 200,
+}
 
-# Node.js
-npm install
+# Mask 过滤
+MAX_IOU_DEDUP = 0.85
+MIN_AREA_RATIO = 0.003
+MAX_AREA_RATIO = 0.90
+
+# OCR
+OCR_CONF_THRESHOLD = 0.50
 ```
 
-### 2. 运行管线
-
-```bash
-# 默认 LaMa 模式 (推荐, 省显存)
-python pipeline.py
-
-# 切换到 SD 模式 (编辑 pipeline.py 顶部的 INPAINT_MODE = "sd")
-
-# 编译 PSD
-node compile_psd.js
-```
-
-### 3. 仅编译 PSD (JSON 已生成时)
-
-```bash
-node compile_psd.js
-```
-
-## JSON 描述格式 (v2.1)
+## JSON 图层描述格式
 
 ```json
 {
   "sourceImage": "detail.webp",
-  "width": 2480,
-  "height": 2132,
-  "ocrEngine": "PaddleOCR PP-OCRv4",
+  "width": 2480, "height": 2132,
+  "ocrEngine": "PaddleOCR 3.4.1 PP-OCRv5 (GPU)",
   "inpaintMode": "lama",
   "layers": [
+    { "type": "background", "name": "背景", "imagePath": "./output/temp/..." },
+    { "type": "image",     "name": "product_2", "label": "product", ... },
     {
-      "type": "background",
-      "name": "背景",
-      "imagePath": "./output/temp/detail_clean_bg.png"
-    },
-    {
-      "type": "image",
-      "name": "product_2",
-      "label": "product",
-      "imagePath": "./output/temp/detail_product_2.png",
-      "left": 0, "top": 7,
-      "width": 2480, "height": 2118,
-      "stability": 0.939
-    },
-    {
-      "type": "text",
-      "name": "文字_产品信息",
-      "text": "产品信息",
-      "left": 913, "top": 632,
-      "width": 666, "height": 155,
-      "fontSize": 155,
-      "color": "#23394e",
-      "confidence": 0.997,
-      "fontWeight": "thin",
-      "fontStyle": "sans-serif",
-      "fontName": "Microsoft YaHei"
+      "type": "text", "text": "产品信息",
+      "left": 913, "top": 632, "width": 666, "height": 155,
+      "fontSize": 155, "color": "#23394e", "confidence": 0.997,
+      "fontWeight": "thin", "fontStyle": "sans-serif", "fontName": "Microsoft YaHei"
     }
   ]
 }
 ```
 
-## 可调参数
+## 精度特性
 
-### pipeline.py
-
-```python
-INPAINT_MODE = "lama"       # "lama" (快) 或 "sd" (高质量)
-OCR_CONF_THRESHOLD = 0.50   # OCR 最低置信度
-SAM_MAX_SIDE = 1024         # SAM 处理分辨率 (越大越精细)
-SAM_PARAMS = {
-    "points_per_side": 32,        # 采样密度 (16→快, 64→精细)
-    "pred_iou_thresh": 0.88,
-    "stability_score_thresh": 0.92,
-}
-```
-
-### compile_psd.js
-
-```javascript
-TEXT_CONFIDENCE_THRESHOLD = 0.50  // 低置信文字丢弃阈值
-```
+| 特性 | 技术 | 说明 |
+|------|------|------|
+| 中文 OCR | PP-OCRv5_server (GPU) | 平均置信度 0.958 |
+| 英文 OCR | PP-OCRv5 + 词表拆分 | 自动修复合并词 |
+| 文字颜色 | Otsu 二值化 + 前景 K-means | 精确提取，不受背景干扰 |
+| 字体粗细 | Distance Transform | thin / normal / bold / extra-bold |
+| 字体风格 | 水平投影方差 | sans-serif / serif |
+| 字体映射 | 粗细+风格→PS 字体 | SimHei / Microsoft YaHei / FangSong / SimSun |
+| 默认修复 | LaMa Inpainting | ~2GB VRAM |
+| 可选修复 | SD 1.5 Inpainting | ~4GB VRAM，高质量纹理 |
+| PSD 文字 | ag-psd LayerTextData | 双击可编辑，自动 fauxBold |
 
 ## 已知限制
 
-1. **文字图层**: ag-psd 在 Photoshop 打开时有"需要更新图层"提示，点击确认后正常可编辑
-2. **字体**: 粗细/风格检测为启发式算法，极端字体可能误判
-3. **英文**: PP-OCRv4 对英文空格识别不稳定，依赖词表后处理
-4. **SD Inpainting**: 需 4GB+ VRAM，大图自动缩放到 768px 处理
-5. **PaddleOCR**: CPU 模式约 0.9s/张，大批量可接受
+1. PaddlePaddle GPU (CUDA 11.8) 与 torch (CUDA 12.1) 共存时需 `import torch` 先于 `import paddleocr`
+2. PP-OCRv5 对英文空格识别不稳定，依赖词表后处理
+3. 字体粗细/风格检测为启发式算法，极端字体可能误判
+4. SD Inpainting 需 4GB+ VRAM，大图自动缩放到 768px
+5. PSD 在 Photoshop 打开时有"需要更新图层"提示，确认后正常
 
 ## 性能参考
 
-- GPU: RTX 3060 (6GB)
-- LaMa 模式: ~2-3 分钟/张 (OCR 0.9s + SAM ~30s + LaMa ~60s)
-- SD 模式: ~3-5 分钟/张 (OCR 0.9s + SAM ~30s + SD ~120s)
-- 峰值显存 (LaMa): ~3GB
-- 峰值显存 (SD): ~5GB
-- 12 张图片 LaMa 总耗时: ~25 分钟
+| 指标 | v2.1 (CPU) | v2.2 (GPU) |
+|------|-----------|-----------|
+| OCR 每张 | ~0.86s | **~0.38s** |
+| 总耗时 (12张) | ~25min | ~18min |
+| 峰值显存 | ~3GB | ~4.5GB |
+| OCR 置信度 | 0.992 (PP-OCRv4) | 0.958 (PP-OCRv5) |
+
+GPU: RTX 3060 (6GB)
