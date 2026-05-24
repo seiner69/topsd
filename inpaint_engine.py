@@ -1,4 +1,4 @@
-"""背景修复引擎 (LaMa / Stable Diffusion)"""
+"""背景修复引擎 (LaMa / Stable Diffusion) - 精细轮廓缝合版"""
 import cv2
 import numpy as np
 import torch
@@ -56,22 +56,23 @@ class InpaintEngine:
 
 def build_inpaint_mask(h_orig: int, w_orig: int,
                        text_layers: list[dict],
-                       image_layers: list[dict]) -> np.ndarray:
-    """组合文字区域和图片区域为 inpainting mask"""
-    combined = np.zeros((h_orig, w_orig), dtype=np.uint8)
+                       precise_image_mask: np.ndarray) -> np.ndarray:
+    """
+    组合文字区域和【精细产品剪影 Mask】为最终的 inpainting mask。
+    完美解决了大矩形框擦除背景导致的模糊失真问题。
+    """
+    # 1. 继承来自 SAM 的高精细产品剪影 Mask (不破坏背景主体)
+    combined = precise_image_mask.copy()
+
+    # 2. 对于文字图层，由于 OCR 检测框通常很紧凑，我们进行适度外扩 (Padding) 后擦除背景
     for tl in text_layers:
         x1, y1 = tl["left"], tl["top"]
         x2, y2 = x1 + tl["width"], y1 + tl["height"]
-        pad = 4
+        pad = 6  # 稍微外扩 6 像素，确保艺术字、笔画边缘不残留杂色
         x1, y1 = max(0, x1 - pad), max(0, y1 - pad)
         x2, y2 = min(w_orig, x2 + pad), min(h_orig, y2 + pad)
         combined[y1:y2, x1:x2] = 255
-    for il in image_layers:
-        x1, y1, lw, lh = il["left"], il["top"], il["width"], il["height"]
-        pad = 6
-        x1, y1 = max(0, x1 - pad), max(0, y1 - pad)
-        x2, y2 = min(w_orig, x1 + lw + pad * 2), min(h_orig, y1 + lh + pad * 2)
-        combined[y1:y2, x1:x2] = 255
+        
     return combined
 
 
